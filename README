@@ -1,0 +1,10 @@
+Passo a Passo para Execução
+
+No diretório raiz (poc-mcp-agent), suba os containers em segundo plano (isso fará o build das imagens):
+docker compose up -d
+
+Como o container do Ollama subiu vazio, você precisa baixar o modelo pela primeira vez. Execute:
+docker exec -it ollama ollama pull llama3.1
+
+Conecte-se ao terminal interativo do mcp_client para começar a conversar com o Agente:
+docker attach mcp_client

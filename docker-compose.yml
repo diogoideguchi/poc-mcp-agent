@@ -1,0 +1,52 @@
+services:
+  neo4j_db:
+    image: neo4j:5.15.0
+    container_name: neo4j_db
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    ports:
+      - "7474:7474" # Interface Web do Neo4j
+      - "7687:7687" # Porta do protocolo Bolt
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  crm_service:
+    build: ./crm_service
+    container_name: crm_service
+    ports:
+      - "8001:8001"
+
+  budget_service:
+    build: ./budget_service
+    container_name: budget_service
+    ports:
+      - "8002:8002"
+
+  mcp_server:
+    build: ./mcp_server
+    container_name: mcp_server
+    ports:
+      - "8000:8000"
+    depends_on:
+      - crm_service
+      - budget_service
+
+  mcp_client:
+    build: ./mcp_client
+    container_name: mcp_client
+    tty: true
+    stdin_open: true
+    environment:
+      - OPENROUTER_API_KEY=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 # Se vazio, usa Ollama
+      - OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free   # Escolha seu modelo favorito
+    depends_on:
+      - mcp_server
+      - ollama
+
+volumes:
+  ollama_data:
