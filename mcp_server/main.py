@@ -2,7 +2,7 @@ from mcp.server.fastmcp import FastMCP
 import httpx
 from neo4j import GraphDatabase
 
-mcp = FastMCP("SalesBudgetBridge")
+mcp = FastMCP("SalesBudgetBridge",host="0.0.0.0", port=8000)
 
 # Usando os nomes dos containers como hostname
 CRM_URL = "http://crm_service:8001"
@@ -92,4 +92,4 @@ def search_unstructured_notes(query: str, opp_id: str = "") -> dict:
 
 if __name__ == "__main__":
     # Rodando como servidor SSE para permitir chamadas via rede do Docker
-    mcp.run(transport='sse', host="0.0.0.0", port=8000)
+    mcp.run(transport='sse')
