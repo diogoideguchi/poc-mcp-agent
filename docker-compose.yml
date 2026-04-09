@@ -39,8 +39,8 @@ services:
   mcp_client:
     build: ./mcp_client
     container_name: mcp_client
-    tty: true
-    stdin_open: true
+    ports:  
+      - "8501:8501" # Porta exposta para acessar a interface Web
     environment:
       - OPENROUTER_API_KEY=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 # Se vazio, usa Ollama
       - OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free   # Escolha seu modelo favorito
