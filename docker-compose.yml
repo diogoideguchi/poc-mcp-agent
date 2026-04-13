@@ -8,6 +8,15 @@ services:
       ports:
         - "2480:2480" # API HTTP / REST
         - "2424:2424" # Porta Binária
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
   crm_service:
     build: ./crm_service
     container_name: crm_service
@@ -30,15 +39,13 @@ services:
       - budget_service
 
   mcp_client:
-    build: ./mcp_client
-    container_name: mcp_client
-    ports:  
-      - "8501:8501" # Porta exposta para acessar a interface Web
-    environment:
-      - OPENROUTER_API_KEY="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"
-      - OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free   # Escolha seu modelo favorito
-    depends_on:
-      - mcp_server
+      build: ./mcp_client
+      container_name: mcp_client
+      ports:
+        - "8501:8501"
+      depends_on:
+        - mcp_server
+        - ollama
 
   knowledge_service:
     build: ./knowledge_service
