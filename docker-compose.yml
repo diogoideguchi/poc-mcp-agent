@@ -1,12 +1,13 @@
 services:
-  neo4j_db:
-    image: neo4j:5.15.0
-    container_name: neo4j_db
-    environment:
-      - NEO4J_AUTH=neo4j/password
-    ports:
-      - "7474:7474" # Interface Web do Neo4j
-      - "7687:7687" # Porta do protocolo Bolt
+  arcadedb:
+      image: arcadedata/arcadedb:latest
+      container_name: arcadedb
+      environment:
+        # Define a senha root do ArcadeDB (necessário para a API REST)
+        - JAVA_OPTS=-Darcadedb.server.rootPassword=playwithdata
+      ports:
+        - "2480:2480" # API HTTP / REST
+        - "2424:2424" # Porta Binária
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -42,11 +43,19 @@ services:
     ports:  
       - "8501:8501" # Porta exposta para acessar a interface Web
     environment:
-      - OPENROUTER_API_KEY=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 # Se vazio, usa Ollama
+      - OPENROUTER_API_KEY="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"
       - OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free   # Escolha seu modelo favorito
     depends_on:
       - mcp_server
       - ollama
+
+  knowledge_service:
+    build: ./knowledge_service
+    container_name: knowledge_service
+    ports:
+      - "8003:8003"
+    depends_on:
+      - neo4j_db
 
 volumes:
   ollama_data:

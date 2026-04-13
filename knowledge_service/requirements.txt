@@ -1,5 +1,5 @@
 fastapi
 uvicorn
 pydantic
-neo4j
-chromadb
+httpx
+fastembed

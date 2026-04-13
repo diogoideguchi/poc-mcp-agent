@@ -1,0 +1,44 @@
+Para validar completamente a sua Prova de Conceito (POC) através do `mcp_client`, é ideal testar cenários que exijam desde chamadas simples de API até o raciocínio híbrido do agente combinando o grafo estrutural e a busca semântica. 
+
+Aqui está uma lista de perguntas e comandos categorizados que você pode enviar para o agente, junto com o que cada uma testa por baixo dos panos:
+
+### 1. Testes de Integração Direta (APIs Básicas)
+Estes comandos testam se o LLM consegue mapear a intenção para as ferramentas CRUD básicas do CRM e do Budget.
+
+* **"Liste todas as oportunidades que temos abertas no CRM neste momento."**
+    * *O que testa:* A ferramenta `get_crm_opportunities`.
+* **"Mova a oportunidade opp_1 para o estágio de 'proposal'."**
+    * *O que testa:* A ferramenta `move_opportunity_stage`. (Se estiver usando a versão com webhook, isso também atualizará o Neo4j silenciosamente em background).
+* **"A equipe acabou de trabalhar no projeto opp_1. Lance 40 horas de um desenvolvedor pleno e 15 horas de um junior."**
+    * *O que testa:* A ferramenta `log_project_hours` executada sequencialmente (múltiplas chamadas de função em uma única interação).
+* **"Verifique o CPI do projeto opp_1. A saúde financeira dele está boa?"**
+    * *O que testa:* A ferramenta `get_project_cpi` e a capacidade do modelo de interpretar o valor de retorno para responder sobre a "saúde" do projeto.
+
+### 2. Testes de GraphRAG (Neo4j)
+Estes testes validam se o agente consegue navegar pelas conexões topológicas que não estão explícitas em uma única tabela de banco de dados.
+
+* **"Analise nosso grafo de conhecimento. Quem é o vendedor que está gerenciando a oportunidade opp_1 e a qual cliente ela pertence?"**
+    * *O que testa:* A ferramenta `get_entity_graph_context`, buscando os nós vizinhos à entidade solicitada.
+* **"A opp_1 evoluiu para um projeto oficial? Use o contexto do grafo para me confirmar."**
+    * *O que testa:* A atualização orientada a eventos. (Dica: primeiro mande o comando *"Mova a opp_1 para won"*. O webhook criará a relação `EVOLVED_TO` no Neo4j, e essa pergunta validará se o agente consegue enxergar esse novo nó de Projeto).
+
+### 3. Testes de VectorRAG (ChromaDB)
+Estes comandos validam a busca semântica em dados textuais e desestruturados.
+
+* **"Resuma as anotações das reuniões que tivemos sobre a opp_1. Quais são as principais demandas técnicas do cliente?"**
+    * *O que testa:* A ferramenta `search_unstructured_notes`. O agente deve recuperar o texto inserido no ChromaDB sobre criptografia AES-256 e segurança em nuvem.
+
+### 4. Testes de Raciocínio Híbrido e Complexo (O Verdadeiro Poder da POC)
+Estas são as perguntas "SOTA" (State of the Art). Elas forçam o modelo a planejar múltiplas etapas, buscar dados estruturados e desestruturados, cruzar informações e consolidar uma resposta humana.
+
+* **"Preciso alinhar as expectativas sobre as exigências de criptografia do projeto da TechCorp. Levando em conta nossas reuniões, o que exatamente eles exigem e com qual vendedor eu devo falar para agendar isso?"**
+    * *O que testa:* O agente precisa usar o VectorRAG para entender *o que* é exigido (AES-256) e o GraphRAG para descobrir *quem* é o vendedor (Carlos) associado àquela oportunidade/cliente.
+* **"Acabamos de fechar a opp_1 (mova para won). No entanto, já gastamos 300 horas de um desenvolvedor sênior nela resolvendo pepinos. Lance essas horas, verifique como ficou o CPI do projeto e faça um resumo das prioridades do cliente anotadas nas reuniões para que eu entenda se esse esforço todo fez sentido."**
+    * *O que testa:* O limite cognitivo do LLM. Ele precisará: 
+        1. Alterar o estágio no CRM.
+        2. Lançar o custo das horas.
+        3. Calcular o CPI atualizado.
+        4. Buscar as anotações no VectorDB.
+        5. Formatar tudo em um relatório final conciso. 
+
+Se o seu agente conseguir executar o último teste perfeitamente usando o OpenRouter com o Gemini Flash ou o GPT-4o, a arquitetura base para o seu ecossistema corporativo autônomo está validada e pronta para ser escalada com frameworks mais pesados como CrewAI ou LangGraph.

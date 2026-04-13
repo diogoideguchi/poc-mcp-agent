@@ -1,28 +1,85 @@
-from fastapi import FastAPI, BackgroundTasks
+import httpx
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
-from neo4j import GraphDatabase
-import chromadb
-import uvicorn
+from fastembed import TextEmbedding
 
-app = FastAPI(title="Knowledge & Webhook Service")
+app = FastAPI(title="Knowledge & Webhook Service (ArcadeDB)")
 
-# Setup Neo4j (Graph)
-NEO4J_URI = "neo4j://neo4j_db:7687"
-driver = GraphDatabase.driver(NEO4J_URI, auth=("neo4j", "password"))
+# ==========================================
+# 1. Configuração do Embedding Local
+# ==========================================
+print("Carregando modelo de embeddings (FastEmbed/ONNX)...")
+# Usaremos um modelo pequeno, em inglês/multilíngue, altamente eficiente
+embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+print("Modelo carregado e pronto na CPU!")
 
-# Setup ChromaDB (Vector) localmente na pasta /app/chroma_data
-chroma_client = chromadb.PersistentClient(path="./chroma_data")
-notes_collection = chroma_client.get_or_create_collection(name="crm_notes")
+# ==========================================
+# 2. Configuração do ArcadeDB
+# ==========================================
+ARCADE_URL = "http://arcadedb:2480/api/v1"
+AUTH = ("root", "playwithdata")
+DB_NAME = "SalesDB"
+DB_COMMAND_URL = f"{ARCADE_URL}/command/{DB_NAME}"
+DB_QUERY_URL = f"{ARCADE_URL}/query/{DB_NAME}"
 
-# Injeta um dado não-estruturado mockado no VectorDB para nosso teste
-notes_collection.upsert(
-    documents=[
-        "Reunião de Kickoff TechCorp: O cliente enfatizou que o foco absoluto do projeto deve ser segurança em nuvem. Eles exigem criptografia AES-256 e auditoria semanal."
-    ],
-    metadatas=[{"opp_id": "opp_1", "type": "meeting_note"}],
-    ids=["note_1"]
-)
+def run_arcade_cmd(command: str, language: str = "sql", params: dict = None):
+    """Executa um comando de escrita no ArcadeDB"""
+    payload = {"language": language, "command": command}
+    if params:
+        payload["parameters"] = params
+    resp = httpx.post(DB_COMMAND_URL, json=payload, auth=AUTH, timeout=10.0)
+    resp.raise_for_status()
+    return resp.json()
 
+def run_arcade_query(query: str, language: str = "sql", params: dict = None):
+    """Executa uma query de leitura no ArcadeDB"""
+    payload = {"language": language, "command": query}
+    if params:
+        payload["parameters"] = params
+    resp = httpx.post(DB_QUERY_URL, json=payload, auth=AUTH, timeout=10.0)
+    resp.raise_for_status()
+    return resp.json().get("result", [])
+
+@app.on_event("startup")
+def init_database():
+    """Inicializa o banco de dados e as estruturas no ArcadeDB"""
+    try:
+        # Verifica se o DB existe, se não, cria
+        resp = httpx.get(f"{ARCADE_URL}/exists/{DB_NAME}", auth=AUTH)
+        if not resp.json().get("result", False):
+            httpx.post(f"{ARCADE_URL}/server", json={"command": f"create database {DB_NAME}"}, auth=AUTH)
+            print(f"Banco {DB_NAME} criado no ArcadeDB.")
+
+        # Cria a estrutura Vetorial (Document/Vertex) usando a linguagem SQL do ArcadeDB
+        schema_cmds = [
+            "CREATE VERTEX TYPE Note IF NOT EXISTS",
+            "CREATE PROPERTY Note.id IF NOT EXISTS STRING",
+            "CREATE PROPERTY Note.text IF NOT EXISTS STRING",
+            "CREATE PROPERTY Note.opp_id IF NOT EXISTS STRING",
+            "CREATE PROPERTY Note.embedding IF NOT EXISTS LIST OF FLOAT",
+            # Cria o índice HNSW para busca vetorial rápida
+            "CREATE INDEX Note_embedding_idx IF NOT EXISTS ON Note (embedding) TYPE HNSW"
+        ]
+        for cmd in schema_cmds:
+            run_arcade_cmd(cmd)
+
+        # Insere a nota mockada vetorizando com o FastEmbed
+        mock_text = "Reunião de Kickoff TechCorp: O cliente enfatizou que o foco absoluto do projeto deve ser segurança em nuvem. Eles exigem criptografia AES-256 e auditoria semanal."
+        # FastEmbed retorna um generator, pegamos o primeiro item e convertemos pra lista de floats
+        mock_vector = list(embedding_model.embed([mock_text]))[0].tolist()
+        
+        run_arcade_cmd(
+            "UPDATE Note SET id = 'note_1', text = :text, opp_id = 'opp_1', embedding = :vec UPSERT WHERE id = 'note_1'",
+            params={"text": mock_text, "vec": mock_vector}
+        )
+        print("Mock Vetorial inserido com sucesso!")
+
+    except Exception as e:
+        print(f"Aviso na inicialização do ArcadeDB: {e}")
+
+# ==========================================
+# 3. Endpoints (Graph & Vector)
+# ==========================================
 class CRMEvent(BaseModel):
     opp_id: str
     client: str
@@ -31,51 +88,66 @@ class CRMEvent(BaseModel):
     price: float
     cost: float
 
-def update_graph(event: CRMEvent):
-    """Lógica de atualização do Neo4j baseada no evento recebido."""
-    query = """
+def update_graph_in_arcade(event: CRMEvent):
+    """Atualiza a topologia de grafos usando a linguagem Cypher suportada pelo ArcadeDB"""
+    cypher_query = """
     MERGE (c:Client {name: $client})
     MERGE (s:Salesperson {name: $salesperson})
     MERGE (o:Opportunity {id: $opp_id})
     SET o.stage = $stage, o.price = $price, o.cost = $cost
     MERGE (c)-[:HAS_OPPORTUNITY]->(o)
     MERGE (s)-[:MANAGES]->(o)
-    FOREACH (ignore IN CASE WHEN $stage = 'won' THEN [1] ELSE [] END |
-        MERGE (p:Project {id: $opp_id})
-        MERGE (o)-[:EVOLVED_TO]->(p)
-    )
     """
-    with driver.session() as session:
-        session.run(query, **event.model_dump())
-        print(f"[Graph Event] Oportunidade {event.opp_id} atualizada no grafo.")
+    try:
+        run_arcade_cmd(cypher_query, language="cypher", params=event.model_dump())
+        
+        # Como o OpenCypher às vezes possui sintaxes restritivas para loops FOREACH com MERGE
+        # lidamos com a evolução para "Project" de forma separada por segurança
+        if event.stage == "won":
+            project_cypher = """
+            MATCH (o:Opportunity {id: $opp_id})
+            MERGE (p:Project {id: $opp_id})
+            MERGE (o)-[:EVOLVED_TO]->(p)
+            """
+            run_arcade_cmd(project_cypher, language="cypher", params={"opp_id": event.opp_id})
+            
+        print(f"[Graph] Oportunidade {event.opp_id} atualizada no ArcadeDB.")
+    except Exception as e:
+        print(f"Erro ao processar Cypher no ArcadeDB: {e}")
 
 @app.post("/webhook/crm_update")
 def crm_webhook(event: CRMEvent, bg_tasks: BackgroundTasks):
-    # Processa a atualização do grafo em background para não travar o CRM
-    bg_tasks.add_task(update_graph, event)
+    bg_tasks.add_task(update_graph_in_arcade, event)
     return {"status": "Event received"}
 
 @app.get("/graph/context/{entity}")
 def get_graph_context(entity: str):
-    query = """
-    MATCH (n)-[r]-(m) WHERE n.id = $id OR n.name = $id
+    cypher_query = """
+    MATCH (n)-[r]-(m) 
+    WHERE n.id = $id OR n.name = $id
     RETURN labels(n)[0] AS EntityType, coalesce(n.id, n.name) AS Entity,
            type(r) AS Relationship, labels(m)[0] AS ConnectedType, coalesce(m.id, m.name) AS ConnectedEntity
     """
-    with driver.session() as session:
-        result = session.run(query, id=entity)
-        return {"context": [record.data() for record in result]}
+    result = run_arcade_query(cypher_query, language="cypher", params={"id": entity})
+    return {"context": result}
 
 @app.get("/vector/search")
 def search_notes(query: str, opp_id: str = None):
-    # Busca semântica usando os embeddings automáticos do ChromaDB
-    where_filter = {"opp_id": opp_id} if opp_id else None
-    results = notes_collection.query(
-        query_texts=[query],
-        n_results=2,
-        where=where_filter
-    )
-    return {"results": results["documents"]}
+    # 1. Gera o embedding da pergunta localmente
+    query_vector = list(embedding_model.embed([query]))[0].tolist()
+    
+    # 2. Busca no ArcadeDB comparando vetores (usamos SQL para tirar vantagem da função vectorDistance)
+    sql_query = "SELECT text, opp_id, vectorDistance(embedding, :vec) as distance FROM Note"
+    
+    params = {"vec": query_vector}
+    if opp_id:
+        sql_query += " WHERE opp_id = :opp_id"
+        params["opp_id"] = opp_id
+        
+    sql_query += " ORDER BY distance ASC LIMIT 2"
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8003)
+    results = run_arcade_query(sql_query, language="sql", params=params)
+    
+    # Limpa a resposta para retornar apenas o texto relevante ao Agente
+    documents = [r["text"] for r in results]
+    return {"results": documents}
