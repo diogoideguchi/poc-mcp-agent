@@ -8,14 +8,6 @@ services:
       ports:
         - "2480:2480" # API HTTP / REST
         - "2424:2424" # Porta Binária
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-
   crm_service:
     build: ./crm_service
     container_name: crm_service
@@ -47,7 +39,6 @@ services:
       - OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free   # Escolha seu modelo favorito
     depends_on:
       - mcp_server
-      - ollama
 
   knowledge_service:
     build: ./knowledge_service
@@ -55,7 +46,4 @@ services:
     ports:
       - "8003:8003"
     depends_on:
-      - neo4j_db
-
-volumes:
-  ollama_data:
+      - arcadedb
